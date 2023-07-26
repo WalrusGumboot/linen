@@ -215,7 +215,9 @@ struct Sheet {
 }
 
 fn is_a_num(token: &Option<Token>) -> bool {
-    token.as_ref().is_some_and(|t| matches!(t, &Token::Number(_)))
+    token
+        .as_ref()
+        .is_some_and(|t| matches!(t, &Token::Number(_)))
 }
 
 impl Sheet {
@@ -306,8 +308,8 @@ impl Sheet {
                                 stack.push(Token::Number(a + b));
                             }
                         }
-                    }                    
-                },
+                    }
+                }
                 Token::Sub => {
                     let maybe_a = stack.pop();
                     let maybe_b = stack.pop();
@@ -319,7 +321,7 @@ impl Sheet {
                                 stack.push(Token::Number(b - a));
                             }
                         }
-                    } 
+                    }
                 }
                 Token::Mul => {
                     let maybe_a = stack.pop();
@@ -332,8 +334,8 @@ impl Sheet {
                                 stack.push(Token::Number(a * b));
                             }
                         }
-                    } 
-                },
+                    }
+                }
                 Token::Div => {
                     let maybe_a = stack.pop();
                     let maybe_b = stack.pop();
@@ -342,14 +344,14 @@ impl Sheet {
                         // that the tokens are numbers
                         if let Token::Number(a) = maybe_a.unwrap() {
                             if let Token::Number(b) = maybe_b.unwrap() {
-                                if a == 0.0 { 
+                                if a == 0.0 {
                                     return Token::Error(ERROR_DIVISION_BY_ZERO);
                                 }
                                 stack.push(Token::Number(b / a));
                             }
                         }
-                    } 
-                },
+                    }
+                }
                 Token::Pow => {
                     let maybe_a = stack.pop();
                     let maybe_b = stack.pop();
@@ -361,8 +363,8 @@ impl Sheet {
                                 stack.push(Token::Number(a.powf(b)));
                             }
                         }
-                    } 
-                },
+                    }
+                }
                 Token::Mod => {
                     let maybe_a = stack.pop();
                     let maybe_b = stack.pop();
@@ -374,8 +376,8 @@ impl Sheet {
                                 stack.push(Token::Number(a % b));
                             }
                         }
-                    } 
-                },
+                    }
+                }
             }
         }
 
@@ -443,7 +445,7 @@ impl Sheet {
                 CellValue::Text(txt) => txt.clone(),
                 CellValue::Expression(expr) =>
                     match self.parse_expression_to_token(cell, expr.clone()) {
-                        Token::Number(num) =>  format!(
+                        Token::Number(num) => format!(
                             "{:.precision$}",
                             num,
                             precision = self.data[cell].precision as usize
@@ -520,7 +522,7 @@ impl Sheet {
         win.move_cursor(Position { x: 0, y: 0 })?;
         // TODO: pad this, so that when going from a bigger to a smaller cell a space is drawn over the previous bracket
         win.print_str(&format!(
-            "[{}{}]",
+            "{}{}",
             col_to_str(self.cursor.0),
             self.cursor.1 + 1
         ))?;
@@ -711,8 +713,10 @@ fn main() -> CursesRes {
     win.set_echo(false)?;
     win.set_cursor_visibility(CursorVisibility::Invisible)?;
 
-    win.set_color_id_rgb(LINEN_BG_ACTIVE, [0.3, 0.3, 0.3])?;
-    win.set_color_pair_content(LINEN_ACTIVE_PAIR, ColorID::WHITE, LINEN_BG_ACTIVE)?;
+    if win.can_change_colors() {
+        win.set_color_id_rgb(LINEN_BG_ACTIVE, [0.3, 0.3, 0.3])?;
+        win.set_color_pair_content(LINEN_ACTIVE_PAIR, ColorID::WHITE, LINEN_BG_ACTIVE)?;
+    }
 
     sheet.print_full(&mut win)?;
 
@@ -746,11 +750,13 @@ fn main() -> CursesRes {
                         sheet.print_full(&mut win)?;
                     }
                     CursesKey::Ascii(b'p') => {
-                        sheet.data[sheet.cursor].precision = sheet.data[sheet.cursor].precision.saturating_add(1);
+                        sheet.data[sheet.cursor].precision =
+                            sheet.data[sheet.cursor].precision.saturating_add(1);
                         sheet.draw_cell(&mut win, sheet.cursor)?;
                     }
                     CursesKey::Ascii(b'o') => {
-                        sheet.data[sheet.cursor].precision = sheet.data[sheet.cursor].precision.saturating_sub(1);
+                        sheet.data[sheet.cursor].precision =
+                            sheet.data[sheet.cursor].precision.saturating_sub(1);
                         sheet.draw_cell(&mut win, sheet.cursor)?;
                     }
                     CursesKey::Ascii(b'=') => {
