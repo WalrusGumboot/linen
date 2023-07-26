@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use core::panic;
 use std::{
     collections::HashSet,
@@ -8,8 +6,6 @@ use std::{
 };
 
 static ERROR_SELF_REFERENTIAL: &str = "#SELFREF";
-static ERROR_DATA_TYPE: &str = "#DATATYPE";
-static ERROR_NOT_ENOUGH_ARGUMENTS: &str = "#NUM_ARGS";
 static ERROR_NO_VALUE_LEFT_ON_STACK: &str = "#NO_VALUE";
 static ERROR_RESIDUAL_OPERATOR: &str = "#RESID_OP";
 static ERROR_DIVISION_BY_ZERO: &str = "#DIV_BY_0";
@@ -26,7 +22,6 @@ lazy_static! {
 
 use yacurses::*;
 
-static LINEN_RED: ColorID = ColorID(0x11);
 static LINEN_BG_ACTIVE: ColorID = ColorID(0x12);
 static LINEN_ACTIVE_PAIR: ColorPair = ColorPair(unsafe { NonZeroU8::new_unchecked(255) }); // SAFETY: trivial
 
@@ -76,16 +71,14 @@ impl std::fmt::Display for CellValue {
 
 #[derive(Clone, Debug)]
 struct SheetCell {
-    coord: Coord,
     value: CellValue,
     precision: u8,
     referenced_by: HashSet<Coord>,
 }
 
 impl SheetCell {
-    fn new(coord: Coord) -> Self {
+    fn new() -> Self {
         SheetCell {
-            coord,
             value: CellValue::Empty,
             precision: 2,
             referenced_by: HashSet::new(),
@@ -137,7 +130,7 @@ fn letters_to_coord(input: &str) -> Coord {
     let col = letters.chars().next().unwrap() as usize - 65;
     let row = numbers - 1;
 
-    Coord(col, row) // strange switcheroo but necessary apparently
+    Coord(col, row)
 }
 
 impl Index<&str> for CellVec {
@@ -158,10 +151,7 @@ impl CellVec {
         CellVec {
             rows,
             cols,
-            data: (0..rows)
-                .flat_map(move |x| std::iter::repeat(x).zip(0..cols))
-                .map(|(r, c)| SheetCell::new(Coord(r, c)))
-                .collect::<Vec<_>>(),
+            data: (0..rows*cols).map(|_| SheetCell::new()).collect()
         }
     }
 
