@@ -1,11 +1,17 @@
 use core::panic;
 use std::{
     collections::HashSet,
+    fmt::format,
     num::NonZeroU8,
     ops::{Index, IndexMut},
+    path::Path,
+    thread,
+    time::Duration,
 };
 
 static ERROR_SELF_REFERENTIAL: &str = "#SELFREF";
+// static ERROR_DATA_TYPE: &str = "#DATATYPE";
+// static ERROR_NOT_ENOUGH_ARGUMENTS: &str = "#NUM_ARGS";
 static ERROR_NO_VALUE_LEFT_ON_STACK: &str = "#NO_VALUE";
 static ERROR_RESIDUAL_OPERATOR: &str = "#RESID_OP";
 static ERROR_DIVISION_BY_ZERO: &str = "#DIV_BY_0";
@@ -29,6 +35,12 @@ type CursesRes = Result<(), Box<dyn std::error::Error>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
 struct Coord(usize, usize); // (x, y)
+
+impl std::fmt::Display for Coord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", col_to_str(self.0), self.1 + 1)
+    }
+}
 
 #[derive(Debug)]
 enum Token {
@@ -54,6 +66,20 @@ enum CellValue {
     Empty,
 }
 
+impl From<String> for CellValue {
+    fn from(value: String) -> Self {
+        if let Ok(num) = value.parse::<f64>() {
+            CellValue::Numerical(num)
+        } else if value.starts_with('=') {
+            CellValue::Expression(value)
+        } else if value.is_empty() {
+            CellValue::Empty
+        } else {
+            CellValue::Text(value)
+        }
+    }
+}
+
 impl std::fmt::Display for CellValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -71,14 +97,16 @@ impl std::fmt::Display for CellValue {
 
 #[derive(Clone, Debug)]
 struct SheetCell {
+    coord: Coord,
     value: CellValue,
     precision: u8,
     referenced_by: HashSet<Coord>,
 }
 
 impl SheetCell {
-    fn new() -> Self {
+    fn new(coord: Coord) -> Self {
         SheetCell {
+            coord,
             value: CellValue::Empty,
             precision: 2,
             referenced_by: HashSet::new(),
@@ -118,7 +146,7 @@ fn letters_to_coord(input: &str) -> Coord {
         .parse::<usize>();
 
     if maybe_numbers.is_err() {
-        panic!("Could not parse the row.")
+        panic!("Could not parse the row from '{}'.", input)
     }
     if letters.is_empty() {
         panic!("Could not parse the column.")
@@ -151,7 +179,10 @@ impl CellVec {
         CellVec {
             rows,
             cols,
-            data: (0..rows*cols).map(|_| SheetCell::new()).collect()
+            data: (0..rows)
+                .flat_map(move |x| std::iter::repeat(x).zip(0..cols))
+                .map(|(r, c)| SheetCell::new(Coord(r, c)))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -202,6 +233,8 @@ struct Sheet {
     cursor: Coord,
     mode: Mode,
     temp_buffer: String,
+
+    modal_content: String,
 }
 
 fn is_a_num(token: &Option<Token>) -> bool {
@@ -221,6 +254,87 @@ impl Sheet {
             base_row_margin: 1,
             mode: Mode::Default,
             temp_buffer: String::new(),
+            modal_content: String::new(),
+        }
+    }
+
+    fn from_file<P: AsRef<Path>>(path: P) -> Self {
+        let raw_content = std::fs::read_to_string(path).expect("Could not read the provided file.");
+        let mut content = raw_content.lines();
+
+        let mut dimensions = content
+            .next()
+            .expect("Malformed file: missing dimension specification in first line.")
+            .split('x');
+        let cols = dimensions
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .expect("Malformed file: could not parse number of columns.");
+        let rows = dimensions
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .expect("Malformed file: could not parse number of rows.");
+
+        let col_widths = content
+            .next()
+            .expect("Malformed file: missing column width specification.")
+            .split(' ')
+            .map(|u| {
+                u.parse::<u32>()
+                    .expect("Malformed file: could not parse column width.")
+            })
+            .collect::<Vec<_>>();
+        let row_heights = content
+            .next()
+            .expect("Malformed file: missing row height specification.")
+            .split(' ')
+            .map(|u| {
+                u.parse::<u32>()
+                    .expect("Malformed file: could not parse row height.")
+            })
+            .collect::<Vec<_>>();
+
+        let mut data = CellVec::new(rows as usize, cols as usize);
+
+        for line in content {
+            let mut parts = line.splitn(4, ':');
+            let coord_string = parts.next().unwrap();
+            let coord = letters_to_coord(coord_string);
+            let precision = parts.next().unwrap().parse::<u8>().unwrap();
+            let referenced_by_raw = parts.next().unwrap();
+            let referenced_by = if referenced_by_raw.is_empty() {
+                HashSet::new()
+            } else {
+                referenced_by_raw
+                    .split(' ')
+                    .map(|s| {
+                        println!("{s}");
+                        letters_to_coord(s)
+                    })
+                    .collect::<HashSet<_>>()
+            };
+            let value = CellValue::from(parts.next().unwrap().to_owned());
+
+            data[coord_string] = SheetCell {
+                coord,
+                precision,
+                value,
+                referenced_by,
+            }
+        }
+
+        Sheet {
+            data,
+            col_widths,
+            row_heights,
+            base_col_margin: 5,
+            base_row_margin: 1,
+            mode: Mode::Default,
+            cursor: Coord(0, 0),
+            temp_buffer: String::new(),
+            modal_content: String::new(),
         }
     }
 
@@ -662,15 +776,7 @@ impl Sheet {
     fn parse_input(&mut self, win: &mut Curses, cell: Coord) -> CursesRes {
         let input = self.temp_buffer.clone();
 
-        if let Ok(num) = input.parse::<f64>() {
-            self.data[cell].value = CellValue::Numerical(num);
-        } else if input.starts_with('=') {
-            self.data[cell].value = CellValue::Expression(input);
-        } else if input.is_empty() {
-            self.data[cell].value = CellValue::Empty;
-        } else {
-            self.data[cell].value = CellValue::Text(input);
-        }
+        self.data[cell].value = CellValue::from(input);
 
         self.draw_cell(win, cell)?;
 
@@ -688,6 +794,104 @@ impl Sheet {
 
         Ok(())
     }
+
+    fn save<P: AsRef<Path> + std::fmt::Display>(&mut self, win: &mut Curses, path: P) -> CursesRes {
+        let mut string_rep: Vec<String> = Vec::new();
+        string_rep.push(format!("{}x{}\n", self.data.cols, self.data.rows));
+        string_rep.push(
+            self.col_widths
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+                + "\n",
+        );
+        string_rep.push(
+            self.row_heights
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+                + "\n",
+        );
+        for cell in &self.data.data {
+            if matches!(cell.value, CellValue::Empty) {
+                continue;
+            }
+            string_rep.push(format!(
+                "{}:{}:{}:{}\n",
+                cell.coord,
+                cell.precision,
+                cell.referenced_by
+                    .iter()
+                    .map(|c| format!("{}{}", col_to_str(c.0), c.1 + 1))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                cell.value
+            ))
+        }
+
+        let glob: Vec<u8> = string_rep.iter().fold(Vec::new(), |mut acc, curr| {
+            acc.append(&mut curr.as_bytes().into());
+            acc
+        });
+
+        std::fs::write(&path, glob.as_slice())?;
+
+        self.modal_content = format!("Succesfully saved to {}.", path);
+        self.draw_modal(win, Duration::from_secs(2))?;
+
+        Ok(())
+    }
+
+    fn draw_modal(&self, win: &mut Curses, duration: Duration) -> CursesRes {
+        let size = win.get_terminal_size();
+        let modal_content_length = self.modal_content.len();
+        let left_edge = size.x_count / 2 - modal_content_length as u32 / 2 - 2;
+
+        win.move_cursor(Position {
+            x: left_edge,
+            y: size.y_count - 3,
+        })?;
+        win.print_ch(win.acs_ulcorner())?;
+        for _ in 0..modal_content_length + 2 {
+            win.print_ch(win.acs_hline())?;
+        }
+        win.print_ch(win.acs_urcorner())?;
+        win.move_cursor(Position {
+            x: left_edge,
+            y: size.y_count - 2,
+        })?;
+        win.print_ch(win.acs_vline())?;
+        win.print_ch(' ')?;
+
+        if !self.modal_content.is_empty() {
+            // TODO: truncate this if it happens to be longer than the screen can fit, which is unlikely
+            win.print_str(&self.modal_content)?;
+        }
+
+        win.print_ch(' ')?;
+        win.print_ch(win.acs_vline())?;
+
+        win.move_cursor(Position {
+            x: left_edge,
+            y: size.y_count - 1,
+        })?;
+
+        win.print_ch(win.acs_llcorner())?;
+        for _ in 0..modal_content_length + 2 {
+            win.print_ch(win.acs_hline())?;
+        }
+        win.insert_ch(win.acs_lrcorner())?;
+
+        win.refresh()?;
+
+        thread::sleep(duration); // blocking, sadly
+
+        self.clear_input_bar(win)?; // we can reuse the same code
+
+        Ok(())
+    }
 }
 
 fn col_to_str(col: usize) -> String {
@@ -696,7 +900,11 @@ fn col_to_str(col: usize) -> String {
 }
 
 fn main() -> CursesRes {
-    let mut sheet = Sheet::new(10, 10);
+    let mut sheet = if let Some(path) = std::env::args().nth(1) {
+        Sheet::from_file(path) // slightly janky but oh well
+    } else {
+        Sheet::new(10, 10)
+    };
 
     let mut win = Curses::init();
 
@@ -764,6 +972,10 @@ fn main() -> CursesRes {
                     }
                     CursesKey::ArrowDown => {
                         sheet.cursor_move(&mut win, Direction::Down)?;
+                    }
+                    CursesKey::Ascii(b's') => {
+                        //TODO: make filepath a field of the Sheet, and open a file dialogue if it is None
+                        sheet.save(&mut win, "sheet.lin")?;
                     }
                     _ => {}
                 }

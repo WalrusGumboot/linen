@@ -7,6 +7,12 @@ to manage stuff you'd usually do in a spreadsheet program, but on the terminal.
 
 Currently it is in a very early stage and should not really be relied upon. A list of features that I'd like to add one day can be found at the bottom of this README.
 
+## Usage
+
+Simply call linen from a shell: `$ linen`. This creates a new 10 by 10 sheet. 
+
+Alternatively, to load a saved file, simply pass that as a second file as an argument. The default linen sheet file extension is `.lin`.
+
 ## Working principle
 
 linen cells can contain a literal number, a literal string, or a formula. Numbers will have priority in parsing. A cell containing `29.3` will thus be registered as a number. Note that the decimal point has to be a full stop `.`; if instead a comma is used, the parsing as a number fails and the input is treated as a string instead. If a cell's contents start with an equals sign `=`, the content will be parsed as a formula.
@@ -48,6 +54,7 @@ Formulas are tokenised sensibly, i.e. cell names get priority. A formula like `=
 |=|starts editing the current cell as a formula|
 |Enter|starts editing the current cell, or accepts the current value|
 |Escape|discards the changed to the current cell, or exits the program|
+|q|exits the program|
 
 ## Future features
 
