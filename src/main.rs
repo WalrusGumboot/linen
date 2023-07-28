@@ -1,13 +1,13 @@
-use core::panic;
+use proctitle::set_title;
 use std::{
     collections::HashSet,
-    fmt::format,
     num::NonZeroU8,
     ops::{Index, IndexMut},
-    path::Path,
+    path::{Path, PathBuf},
     thread,
     time::Duration,
 };
+use thiserror::Error;
 
 static ERROR_SELF_REFERENTIAL: &str = "#SELFREF";
 // static ERROR_DATA_TYPE: &str = "#DATATYPE";
@@ -134,43 +134,53 @@ impl IndexMut<Coord> for CellVec {
     }
 }
 
-fn letters_to_coord(input: &str) -> Coord {
-    let letters = input
-        .chars()
-        .filter(|c| c.is_alphabetic())
-        .collect::<String>();
-    let maybe_numbers = input
-        .chars()
-        .filter(|c| c.is_numeric())
-        .collect::<String>()
-        .parse::<usize>();
+#[derive(Debug, Error)]
+enum CoordinateConversionError {
+    #[error("Could not parse column data from {0}.")]
+    ColumnParseError(String),
+    #[error("Could not parse row data from {0}.")]
+    RowParseError(String)
+}
 
-    if maybe_numbers.is_err() {
-        panic!("Could not parse the row from '{}'.", input)
+impl TryFrom<&str> for Coord {
+    type Error = CoordinateConversionError;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let letters = value
+            .chars()
+            .filter(|c| c.is_alphabetic())
+            .collect::<String>();
+        let maybe_numbers = value
+            .chars()
+            .filter(|c| c.is_numeric())
+            .collect::<String>()
+            .parse::<usize>();
+
+        if letters.is_empty() {
+            return Err(CoordinateConversionError::ColumnParseError(value.to_owned()))
+        }
+        
+        if let Ok(numbers) = maybe_numbers {
+            // TODO: support letter parts bigger than one letter
+            let col = letters.chars().next().unwrap() as usize - 65;
+            let row = numbers - 1;
+            
+            Ok(Coord(col, row))   
+        } else {
+            Err(CoordinateConversionError::RowParseError(value.to_owned()))
+        }
     }
-    if letters.is_empty() {
-        panic!("Could not parse the column.")
-    }
-
-    let numbers = maybe_numbers.unwrap();
-
-    // TODO: support letter parts bigger than one letter
-    let col = letters.chars().next().unwrap() as usize - 65;
-    let row = numbers - 1;
-
-    Coord(col, row)
 }
 
 impl Index<&str> for CellVec {
     type Output = SheetCell;
     fn index(&self, index: &str) -> &Self::Output {
-        &self[letters_to_coord(index)]
+        &self[Coord::try_from(index).unwrap()]
     }
 }
 
 impl IndexMut<&str> for CellVec {
     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
-        &mut self[letters_to_coord(index)]
+        &mut self[Coord::try_from(index).unwrap()]
     }
 }
 
@@ -235,6 +245,8 @@ struct Sheet {
     temp_buffer: String,
 
     modal_content: String,
+
+    file_path: Option<PathBuf>,
 }
 
 fn is_a_num(token: &Option<Token>) -> bool {
@@ -245,6 +257,7 @@ fn is_a_num(token: &Option<Token>) -> bool {
 
 impl Sheet {
     fn new(rows: usize, cols: usize) -> Self {
+        set_title("linen <new-buf>");
         Sheet {
             data: CellVec::new(rows, cols),
             col_widths: vec![12; cols],
@@ -255,11 +268,16 @@ impl Sheet {
             mode: Mode::Default,
             temp_buffer: String::new(),
             modal_content: String::new(),
+            file_path: None,
         }
     }
 
-    fn from_file<P: AsRef<Path>>(path: P) -> Self {
-        let raw_content = std::fs::read_to_string(path).expect("Could not read the provided file.");
+    fn from_file<P: AsRef<Path>>(path: P) -> Self
+    where
+        PathBuf: From<P>,
+    {
+        let raw_content =
+            std::fs::read_to_string(&path).expect("Could not read the provided file.");
         let mut content = raw_content.lines();
 
         let mut dimensions = content
@@ -301,7 +319,7 @@ impl Sheet {
         for line in content {
             let mut parts = line.splitn(4, ':');
             let coord_string = parts.next().unwrap();
-            let coord = letters_to_coord(coord_string);
+            let coord = Coord::try_from(coord_string).unwrap();
             let precision = parts.next().unwrap().parse::<u8>().unwrap();
             let referenced_by_raw = parts.next().unwrap();
             let referenced_by = if referenced_by_raw.is_empty() {
@@ -309,10 +327,7 @@ impl Sheet {
             } else {
                 referenced_by_raw
                     .split(' ')
-                    .map(|s| {
-                        println!("{s}");
-                        letters_to_coord(s)
-                    })
+                    .map(|s| Coord::try_from(s).unwrap())
                     .collect::<HashSet<_>>()
             };
             let value = CellValue::from(parts.next().unwrap().to_owned());
@@ -335,6 +350,7 @@ impl Sheet {
             cursor: Coord(0, 0),
             temp_buffer: String::new(),
             modal_content: String::new(),
+            file_path: Some(path.into()),
         }
     }
 
@@ -356,7 +372,7 @@ impl Sheet {
             .filter(|s| s.len() != 0)
             .map(|token| {
                 if CELL_REGEX.is_match(token) {
-                    let coord = letters_to_coord(token);
+                    let coord = Coord::try_from(token).unwrap();
 
                     if self.data.get_all_dependents(cell, vec![]).contains(&coord) {
                         return Token::Error(ERROR_SELF_REFERENTIAL);
@@ -795,51 +811,60 @@ impl Sheet {
         Ok(())
     }
 
-    fn save<P: AsRef<Path> + std::fmt::Display>(&mut self, win: &mut Curses, path: P) -> CursesRes {
-        let mut string_rep: Vec<String> = Vec::new();
-        string_rep.push(format!("{}x{}\n", self.data.cols, self.data.rows));
-        string_rep.push(
-            self.col_widths
-                .iter()
-                .map(|u| u.to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
-                + "\n",
-        );
-        string_rep.push(
-            self.row_heights
-                .iter()
-                .map(|u| u.to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
-                + "\n",
-        );
-        for cell in &self.data.data {
-            if matches!(cell.value, CellValue::Empty) {
-                continue;
-            }
-            string_rep.push(format!(
-                "{}:{}:{}:{}\n",
-                cell.coord,
-                cell.precision,
-                cell.referenced_by
+    fn save(&mut self, win: &mut Curses) -> CursesRes {
+        if let Some(path) = &self.file_path {
+            let mut string_rep: Vec<String> = Vec::new();
+            string_rep.push(format!("{}x{}\n", self.data.cols, self.data.rows));
+            string_rep.push(
+                self.col_widths
                     .iter()
-                    .map(|c| format!("{}{}", col_to_str(c.0), c.1 + 1))
+                    .map(|u| u.to_string())
                     .collect::<Vec<_>>()
-                    .join(" "),
-                cell.value
-            ))
+                    .join(" ")
+                    + "\n",
+            );
+            string_rep.push(
+                self.row_heights
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    + "\n",
+            );
+            for cell in &self.data.data {
+                if matches!(cell.value, CellValue::Empty) {
+                    continue;
+                }
+                string_rep.push(format!(
+                    "{}:{}:{}:{}\n",
+                    cell.coord,
+                    cell.precision,
+                    cell.referenced_by
+                        .iter()
+                        .map(|c| format!("{}{}", col_to_str(c.0), c.1 + 1))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    cell.value
+                ))
+            }
+
+            let glob: Vec<u8> = string_rep.iter().fold(Vec::new(), |mut acc, curr| {
+                acc.append(&mut curr.as_bytes().into());
+                acc
+            });
+
+            std::fs::write(&path, glob.as_slice())?;
+
+            self.modal_content = format!("Succesfully saved to {}.", path.display());
+            self.draw_modal(win, Duration::from_secs(2))?;
+
+            set_title(format!("linen {}", path.display()))
+        } else {
+            //TODO: display a text input dialogue
+            //TODO: warn if file already exists
+            self.file_path = Some(PathBuf::from("sheet.lin"));
+            self.save(win)?;
         }
-
-        let glob: Vec<u8> = string_rep.iter().fold(Vec::new(), |mut acc, curr| {
-            acc.append(&mut curr.as_bytes().into());
-            acc
-        });
-
-        std::fs::write(&path, glob.as_slice())?;
-
-        self.modal_content = format!("Succesfully saved to {}.", path);
-        self.draw_modal(win, Duration::from_secs(2))?;
 
         Ok(())
     }
@@ -975,7 +1000,7 @@ fn main() -> CursesRes {
                     }
                     CursesKey::Ascii(b's') => {
                         //TODO: make filepath a field of the Sheet, and open a file dialogue if it is None
-                        sheet.save(&mut win, "sheet.lin")?;
+                        sheet.save(&mut win)?;
                     }
                     _ => {}
                 }
@@ -1003,7 +1028,7 @@ fn main() -> CursesRes {
 
     drop(win);
 
-    println!("cursor was on {:?}", sheet.data[sheet.cursor]);
+    //println!("cursor was on {:?}", sheet.data[sheet.cursor]);
 
     Ok(())
 }
