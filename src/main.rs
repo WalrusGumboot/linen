@@ -139,7 +139,7 @@ enum CoordinateConversionError {
     #[error("Could not parse column data from {0}.")]
     ColumnParseError(String),
     #[error("Could not parse row data from {0}.")]
-    RowParseError(String)
+    RowParseError(String),
 }
 
 impl TryFrom<&str> for Coord {
@@ -156,15 +156,17 @@ impl TryFrom<&str> for Coord {
             .parse::<usize>();
 
         if letters.is_empty() {
-            return Err(CoordinateConversionError::ColumnParseError(value.to_owned()))
+            return Err(CoordinateConversionError::ColumnParseError(
+                value.to_owned(),
+            ));
         }
-        
+
         if let Ok(numbers) = maybe_numbers {
             // TODO: support letter parts bigger than one letter
             let col = letters.chars().next().unwrap() as usize - 65;
             let row = numbers - 1;
-            
-            Ok(Coord(col, row))   
+
+            Ok(Coord(col, row))
         } else {
             Err(CoordinateConversionError::RowParseError(value.to_owned()))
         }
@@ -999,7 +1001,6 @@ fn main() -> CursesRes {
                         sheet.cursor_move(&mut win, Direction::Down)?;
                     }
                     CursesKey::Ascii(b's') => {
-                        //TODO: make filepath a field of the Sheet, and open a file dialogue if it is None
                         sheet.save(&mut win)?;
                     }
                     _ => {}

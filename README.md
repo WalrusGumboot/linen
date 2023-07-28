@@ -45,6 +45,7 @@ Formulas are tokenised sensibly, i.e. cell names get priority. A formula like `=
 |---|---|
 |arrow keys|moves the cursor around|
 |u|updates the entire window|
+|s|saves the file. If the file was opened from an existing file, overwrites. If linen was opened without loading a file, this will save the current sheet to `sheet.lin`. This is temporary behaviour.|
 |p|increases the precision of the current cell|
 |o|decreases the precision of the current cell|
 |h|decreases the width of the current column|
