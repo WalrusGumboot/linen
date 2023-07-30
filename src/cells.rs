@@ -158,19 +158,17 @@ impl CellVec {
             .referenced_by
             .iter()
             .filter(|d| !path.contains(d))
-            .into_iter()
             .collect::<Vec<_>>();
         if dependents.is_empty() {
             vec![cell]
         } else {
             dependents
                 .iter()
-                .map(|d| {
+                .flat_map(|d| {
                     let mut new_path = path.clone();
                     new_path.push(cell);
                     self.get_all_dependents(**d, new_path)
                 })
-                .flatten()
                 .collect()
         }
     }

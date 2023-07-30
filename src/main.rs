@@ -64,11 +64,11 @@ fn main() -> CursesRes {
                         sheet.print_full(&mut win)?;
                     } // smaller  row
                     CursesKey::Ascii(b'k') => {
-                        sheet.row_heights[sheet.cursor.1] = sheet.row_heights[sheet.cursor.1] + 1;
+                        sheet.row_heights[sheet.cursor.1] += 1;
                         sheet.print_full(&mut win)?;
                     } // taller   row
                     CursesKey::Ascii(b'l') => {
-                        sheet.col_widths[sheet.cursor.0] = sheet.col_widths[sheet.cursor.0] + 1;
+                        sheet.col_widths[sheet.cursor.0] += 1;
                         sheet.print_full(&mut win)?;
                     } // wider    column
                     CursesKey::Ascii(b'i') | CursesKey::Ascii(b'\n') | CursesKey::Insert => {

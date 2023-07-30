@@ -153,7 +153,7 @@ impl Sheet {
             .unwrap()
             .split_inclusive(SPLITTABLE_TOKENS_SPACE)
             .map(|s| s.trim())
-            .map(|s| {
+            .flat_map(|s| {
                 if let Some(idx) = s.find(SPLITTABLE_TOKENS) {
                     let (a, b) = s.split_at(idx);
                     vec![a, b]
@@ -161,8 +161,7 @@ impl Sheet {
                     vec![s]
                 }
             })
-            .flatten()
-            .filter(|s| s.len() != 0)
+            .filter(|s| !s.is_empty())
             .map(|token| {
                 if CELL_REGEX.is_match(token) {
                     let coord = Coord::try_from(token).unwrap();
@@ -174,19 +173,17 @@ impl Sheet {
                     self.data[token].referenced_by.insert(cell);
 
                     Token::Reference(coord, self.data[coord].value.clone())
+                } else if let Ok(num) = token.parse::<f64>() {
+                    Token::Number(num)
                 } else {
-                    if let Ok(num) = token.parse::<f64>() {
-                        Token::Number(num)
-                    } else {
-                        match token {
-                            "+" => Token::Add,
-                            "-" => Token::Sub,
-                            "*" => Token::Mul,
-                            "/" => Token::Div,
-                            "%" => Token::Mod,
-                            "^" => Token::Pow,
-                            _ => Token::Text(token.to_owned()),
-                        }
+                    match token {
+                        "+" => Token::Add,
+                        "-" => Token::Sub,
+                        "*" => Token::Mul,
+                        "/" => Token::Div,
+                        "%" => Token::Mod,
+                        "^" => Token::Pow,
+                        _ => Token::Text(token.to_owned()),
                     }
                 }
             })
@@ -646,7 +643,7 @@ impl Sheet {
                 acc
             });
 
-            std::fs::write(&path, glob.as_slice())?;
+            std::fs::write(path, glob.as_slice())?;
 
             self.modal_content = format!("Succesfully saved to {}.", path.display());
             self.draw_modal(win, Duration::from_secs(2))?;
